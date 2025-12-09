@@ -58,6 +58,8 @@ local function process_part(msgid, part, indent)
     for _, line in ipairs(vim.split(html, "\n")) do
       table.insert(lines, indent .. line)
     end
+  else
+    table.insert(lines, indent .. ("[part #%d: %s]"):format(part.id, content_type))
   end
 
   -- -- Handle multipart - recurse into sub-parts
@@ -123,8 +125,16 @@ end
 local function process_message(msg, depth)
   local lines = {}
   local indent = string.rep("  ", depth)
+  local msg_id = msg.id
 
-  table.insert(lines, indent .. "{{{")
+  local fold_text = indent
+  if msg.headers then
+    fold_text = fold_text .. msg.headers.From .. " "
+  end
+  if msg.tags then
+    fold_text = fold_text .. "(" .. table.concat(msg.tags, ",") .. ") "
+  end
+  vim.list_extend(lines, { fold_text .. "{{{", "" })
 
   if msg.headers then
     local header_lines = format_headers(msg.headers, indent)
@@ -144,8 +154,6 @@ local function process_message(msg, depth)
   end
 
   table.insert(lines, "}}}")
-  table.insert(lines, "")
-
   return lines
 end
 

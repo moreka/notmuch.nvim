@@ -39,6 +39,6 @@ highlight link nmThreadEllipsis	Normal
 highlight link nmThreadID	Include
 highlight link nmDate		String
 highlight link nmThreadCount	Comment
-highlight nmFrom		ctermfg=224 guifg=Orange gui=italic
+highlight link nmFrom		Normal
 highlight link nmSubject	Statement
 highlight link nmTags		Comment
