@@ -2,7 +2,7 @@ local u = {}
 local v = vim.api
 
 u.file_exists = function(path)
-  local file = io.open(path, 'r')
+  local file = io.open(path, "r")
   if file then
     file:close()
     return true
@@ -11,155 +11,208 @@ u.file_exists = function(path)
   end
 end
 
--- there is a better way to do this !!!
--- Splits a string given a delimiter
---
--- This function takes in a string and splits it into a table of strings based
--- on some delimiter given by the caller, and returns the result table.
---
--- @param s string: input string
--- @param delim string: delimiter string (can be char or more complex)
---
--- @returns out table: table of strings as split by the function given delim
-u.split = function(s, delim)
-  local out = {}
-  local i = 1
-  for entry in string.gmatch(s, delim) do
-    out[i] = entry
-    i = i + 1
-  end
-  return out
+---Convert HTML content to plain text using w3m
+local function html_to_text(html_content)
+  local tmpfile = vim.fn.tempname() .. ".html"
+  local f = io.open(tmpfile, "w")
+  if not f then return html_content end
+
+  f:write(html_content)
+  f:close()
+
+  local output = u.shell_sync({ "w3m", "-dump", "-T", "text/html", tmpfile })
+  os.remove(tmpfile)
+  return output
 end
 
--- Indents the header line of a message based on its depth
---
--- This function takes in the buffer and line number of a message header, and
--- the depth of the email message in the thread's reply chain. Accordingly the
--- function will prepend the header with special characters to signify its depth
--- to the user in a user friendly way.
---
--- @param buf int: id of the buffer containing the message header in question
--- @param lineno int: line number of the header which the user wants to indent
--- @param depth int: depth of the message in the reply chain of the thread
---
--- @usage
--- -- See u.process_msgs_in_thread() for invocation example
--- indent_depth(buf, lineno, msg.depth)
-local indent_depth = function(buf, lineno, depth)
-  local line = vim.fn.getline(lineno)
-  local s = ''
-  for _=0,depth-1 do s = '────' .. s end
-  v.nvim_buf_set_lines(buf, lineno-1, lineno, true, { s .. line })
+local function get_data_for_msg_part(msgid, part)
+  return u.shell_sync({ "notmuch", "show", ("--part=%d"):format(part), "id:" .. msgid })
 end
 
--- Processes the output of `notmuch show` to user friendly buffer format
---
--- This function iterates over the lines of the buffer `buf`, identifying and
--- transforming lines matching certain patterns typically found in `notmuch`
--- message output. Relevant details of each message are extracted and headers
--- are modified for better readability and navigation through logical folds in
--- Neovim.
---
--- @param buf: The buffer id where the message content is located.
---
--- Behavior:
--- - Identifies lines starting with "message{", extracting metadata.
--- - Inserts structural navigation markers "{{{" and "}}}" for message folds.
--- - Deletes unnecessary line information such as envelope or parts detail,
--- 
--- Side Effects:
--- - Modifies the passed `buf` in place by adding, removing, or changing lines of text.
--- - Adds folding marks "{{{" and "}}}" for smooth folding and chaining.
--- - Indents (using `indent_depth()`) based on each msg's depth in reply chain
---
--- Usage Warning:
--- - Expects a valid Neovim buffer with `notmuch` formatted messages.
--- - Subject to change based on format of `notmuch-show` raw output
--- - Designed for synchronous message processing
---   - As of now this is fine, there is no notable performance degradation
---   - If threads are much larger, might need to explore async funcs
-u.process_msgs_in_thread = function(buf)
-  -- Loop over each line in the buffer and clean up the message output format
-  local msg = {} -- Table which stores id, depth, file of a message
-  local lineno = 1 -- Start from the top of the buffer
-  local last = vim.fn.line('$') -- End at the bottom of the buffer
+---Process a single part (body content, attachments, etc.)
+local function process_part(msgid, part, indent)
+  local lines = {}
+  local content_type = part["content-type"] or ""
 
-  while lineno <= last do
-    -- Store line contents
-    local line = vim.fn.getline(lineno)
-
-    -- Message start : Store message details in `msg` and remove the line
-    if string.match(line, "^message{") ~= nil then
-      msg.id = string.match(line, 'id:%S+')
-      msg.depth = tonumber(string.match(string.match(line, 'depth:%d+'), '%d+'))
-      msg.filename = string.match(line, 'filename:%C+')
-      v.nvim_buf_set_lines(buf, lineno-1, lineno, true, {})
-      lineno = lineno - 1
-      last = last - 1 -- Because we removed a line so buffer is shorter
-
-    -- Header fields : Subject, From, To, etc. Indent based on `msg.depth`
-    elseif string.match(line, '^header{') ~= nil then
-      v.nvim_buf_set_lines(buf, lineno-1, lineno, true, {}) -- Remove "header("
-      indent_depth(buf, lineno, msg.depth)
-      line = vim.fn.getline(lineno) -- Add fold start identifier '{{{'
-      v.nvim_buf_set_lines(buf, lineno-1, lineno, true, { line, msg.id .. ' {{{' })
-
-    -- Pass over "Subject" field and next header fields
-    elseif string.match(line, '^Subject:') ~= nil then
-      lineno = lineno + 2
-      last = last + 1
-
-    -- Closing header field : Delete
-    elseif string.match(line, '^header}') ~= nil then
-      v.nvim_buf_set_lines(buf, lineno-1, lineno, true, { '' })
-
-    -- Closing message field : Replace with folding closing "}}}"
-    elseif string.match(line, '^message}') ~= nil then
-      v.nvim_buf_set_lines(buf, lineno-1, lineno, true, { '}}}', '' })
-      lineno = lineno + 1
-      last = last + 1
-
-    -- Removes extra cruft like "parts", etc.
-    elseif string.match(line, '^%a+[{}]') ~= nil then
-      v.nvim_buf_set_lines(buf, lineno-1, lineno, true, {})
-      lineno = lineno - 1
-      last = last - 1
+  if (content_type == "multipart/mixed" or content_type == "multipart/related") and part.content then
+    for _, inner_part in ipairs(part.content) do
+      local inner_lines = process_part(msgid, inner_part, indent)
+      vim.list_extend(lines, inner_lines)
     end
-
-    -- Increment lineno to inspect the next line, next loop
-    lineno = lineno + 1
-  end
-end
-
--- Retrieves the id of the message under cursor
---
--- This function fetches the id of the message being viewed under the cursor by
--- iteratively scanning each line backwards for the `id:` field. If used
--- incorrectly or no id is found, a helpful message will indicate the same
---
--- @returns id int: id of the email messageo
---
--- @usage
--- local id = require('notmuch.util').find_cursor_msg_id()
--- -- Do something with the mail id (e.g. reply, tag, get attachments)
-u.find_cursor_msg_id = function()
-  local n = v.nvim_win_get_cursor(0)[1] + 1
-  local line = nil
-  local id = nil
-  while n ~= 1 do
-    line = vim.fn.getline(n)
-    if string.match(line, '^id:%S+ {{{$') ~= nil then
-      id = string.match(line, '%S+', 4)
-      return id
+  elseif content_type == "multipart/alternative" and part.content then
+    --TODO: for now just show the text/plain part
+    for _, inner_part in ipairs(part.content) do
+      if inner_part["content-type"] == "text/plain" then
+        local inner_lines = process_part(msgid, inner_part, indent)
+        vim.list_extend(lines, inner_lines)
+        break
+      end
     end
-    n = n - 1
+  elseif content_type == "text/plain" and part.content then
+    for _, line in ipairs(vim.split(part.content, "\n")) do
+      table.insert(lines, indent .. line)
+    end
+  elseif content_type == "text/html" then
+    local data = get_data_for_msg_part(msgid, part.id)
+    local html = html_to_text(data)
+    for _, line in ipairs(vim.split(html, "\n")) do
+      table.insert(lines, indent .. line)
+    end
   end
 
-  -- id not found for the cursor location
-  print('No ID found. Make sure cursor is located in a message')
-  return nil
+  -- -- Handle multipart - recurse into sub-parts
+  -- if part.content then
+  --   for _, subpart in ipairs(part.content) do
+  --     local sublines = process_part(subpart, indent)
+  --     for _, line in ipairs(sublines) do
+  --       table.insert(lines, line)
+  --     end
+  --   end
+  --   return lines
+  -- end
+  --
+  -- -- Handle text content
+  -- if part.content then
+  --   local content = part.content
+  --
+  --   -- Convert HTML to plain text
+  --   if string.match(content_type, 'text/html') then
+  --     content = html_to_text(content)
+  --   end
+  --
+  --   -- Add content lines with indentation
+  --   for line in content:gmatch('[^\n]+') do
+  --     table.insert(lines, indent .. line)
+  --   end
+  -- end
+  --
+  -- -- Handle attachments (optional: show filename)
+  -- if part.filename then
+  --   table.insert(lines, indent .. '[Attachment: ' .. part.filename .. ']')
+  -- end
+
+  return lines
 end
+
+---Format headers for display
+local function format_headers(headers, indent)
+  local lines = {}
+  local header_order = { "Subject", "From", "To", "Cc", "Bcc", "Date" }
+
+  -- Add headers in preferred order
+  for _, key in ipairs(header_order) do
+    if headers[key] then table.insert(lines, indent .. key .. ": " .. headers[key]) end
+  end
+
+  -- Add any remaining headers
+  for key, value in pairs(headers) do
+    local found = false
+    for _, ordered_key in ipairs(header_order) do
+      if key == ordered_key then
+        found = true
+        break
+      end
+    end
+    if not found then table.insert(lines, indent .. key .. ": " .. value) end
+  end
+
+  return lines
+end
+
+---Process a single message
+local function process_message(msg, depth)
+  local lines = {}
+  local indent = string.rep("  ", depth)
+
+  table.insert(lines, indent .. "{{{")
+
+  if msg.headers then
+    local header_lines = format_headers(msg.headers, indent)
+    for _, line in ipairs(header_lines) do
+      table.insert(lines, line)
+    end
+    table.insert(lines, "")
+  end
+
+  if msg.body then
+    for _, part in ipairs(msg.body) do
+      local part_lines = process_part(msg_id, part, indent)
+      for _, line in ipairs(part_lines) do
+        table.insert(lines, line)
+      end
+    end
+  end
+
+  table.insert(lines, "}}}")
+  table.insert(lines, "")
+
+  return lines
+end
+
+---@param buf integer
+---@param thread_json string
+u.process_msgs_in_thread = function(buf, thread_json)
+  local lines = {}
+
+  -- Parse JSON
+  local ok, data = pcall(vim.json.decode, thread_json)
+  if not ok then
+    vim.notify("Failed to parse notmuch JSON output", vim.log.levels.ERROR)
+    return
+  end
+
+  -- Handle both single message and thread array formats
+  local messages = data
+  if type(data) ~= "table" then
+    vim.notify("Invalid JSON format", vim.log.levels.ERROR)
+    return
+  end
+
+  -- If data is wrapped in array, unwrap it
+  if #data > 0 and data[1] then messages = data[1] end
+
+  local traverse_message
+  traverse_message = function(msg, depth)
+    depth = depth or 0
+    if msg[1] and msg[1][1] then
+      local m = msg[1][1]
+      local rest = msg[1][2]
+      local msg_lines = process_message(m, depth)
+      vim.list_extend(lines, msg_lines)
+      if rest then traverse_message(rest, depth) end
+    end
+  end
+
+  -- Start processing
+  if #messages > 0 then
+    traverse_message(messages, 0)
+  else
+    u.error("not implemented")
+  end
+  --   -- Single message, not a thread
+  --   local msg_lines = process_message(messages, 0)
+  --   for _, line in ipairs(msg_lines) do
+  --     table.insert(lines, line)
+  --   end
+  -- end
+
+  -- Set buffer contents in one operation
+  v.nvim_buf_set_lines(buf, 0, -1, false, lines)
+end
+
+---Runs a shell command synchronously and returns the stdout
+---
+---@param cmd string[]
+---@return string?
+u.shell_sync = function(cmd)
+  local obj = vim.system(cmd, { text = true }):wait()
+  if obj.code ~= 0 then return nil end
+  return obj.stdout
+end
+
+---Notify with error severity
+---
+---@param msg string
+u.error = function(msg) vim.notify(msg, vim.log.levels.ERROR) end
 
 return u
-
--- vim: tabstop=2:shiftwidth=2:expandtab:foldmethod=indent

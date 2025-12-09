@@ -1,36 +1,43 @@
 local nm = {}
 local v = vim.api
 
-local config = require('notmuch.config')
+local config = require("notmuch.config")
+local util = require("notmuch.util")
 
--- Setup `notmuch.nvim`
---
--- This function initializes the notmuch.nvim plugin. It defines the entry point
--- command(s) and sets configuration options based on user passed arguments or
--- default values
---
--- @param opts table: Table of options as passed by the user with their config
---                    setup
---
--- @usage
--- -- Example from inside `lazy.nvim` plugin spec configuration
--- {
---   config = function()
---     opts = { ... } -- options go here
---     require('notmuch').setup(opts)
---   end
--- }
+---Setup `notmuch.nvim`
+---
+---@param opts NotmuchConfig? notmuch options
+---@usage
+---If using `lazy.nvim`:
+---```lua
+---return {
+---  "moreka/notmuch.nvim",
+---  opts = { ... } -- options go here
+---}
+---```
+---
+---If using builtin `vim.pack`:
+---```lua
+---vim.pack.add({ "https://github.com/moreka/notmuch.nvim" })
+---require("notmuch").setup({ ... }) -- options go here
+---```
 nm.setup = function(opts)
-  -- Setup configuration defaults and/or user options
-  local success = config.setup(opts)
+  local defaults = config.defaults()
+  if not defaults then
+    util.error("notmuch.nvim: Failed to load. Please configure notmuch first.")
+    return false
+  end
+  config.options = vim.tbl_deep_extend("force", defaults, opts or {})
+  ---TODO: validate the config
+end
 
-  if not success then
+nm.command = function(args)
+  --TODO: not implemented
+  if not config.options then
+    util.error("have to call `setup()` first")
     return
   end
-
-  -- Set up the main entry point command :Notmuch
-  vim.cmd[[command Notmuch :lua require('notmuch').notmuch_hello()]]
-  vim.cmd[[command Inbox :lua require('notmuch').search_terms("tag:inbox")]]
+  nm.notmuch_hello()
 end
 
 -- Launch `notmuch.nvim` landing page
@@ -44,7 +51,7 @@ end
 -- @usage
 -- lua require('notmuch').notmuch_hello()
 nm.notmuch_hello = function()
-  local bufno = vim.fn.bufnr('Tags')
+  local bufno = vim.fn.bufnr("Tags")
   if bufno ~= -1 then
     v.nvim_win_set_buf(0, bufno)
   else
@@ -67,9 +74,9 @@ end
 -- lua require('notmuch').search_terms('tag:inbox')
 nm.search_terms = function(search, jumptothreadid)
   local num_threads_found = 0
-  if search == '' then
+  if search == "" then
     return nil
-  elseif string.match(search, '^thread:%S+$') ~= nil then
+  elseif string.match(search, "^thread:%S+$") ~= nil then
     nm.show_thread(search)
     return true
   end
@@ -82,14 +89,15 @@ nm.search_terms = function(search, jumptothreadid)
   v.nvim_buf_set_name(buf, search)
   v.nvim_win_set_buf(0, buf)
 
-  local hint_text = "Hints: <Enter>: Open thread | q: Close | r: Refresh | %: Sync maildir | a: Archive | A: Archive and Read | +/-/=: Add, remove, toggle tag | dd: Delete"
-  v.nvim_buf_set_lines(buf, 0, 2, false, { hint_text , "" })
+  local hint_text =
+    "Hints: <Enter>: Open thread | q: Close | r: Refresh | %: Sync maildir | a: Archive | A: Archive and Read | +/-/=: Add, remove, toggle tag | dd: Delete"
+  v.nvim_buf_set_lines(buf, 0, 2, false, { hint_text, "" })
 
   -- Async notmuch search to make the UX non blocking
-  require('notmuch.async').run_notmuch_search(search, buf, function()
+  require("notmuch.async").run_notmuch_search(search, buf, function()
     -- Completion logic
-    if vim.fn.getline(2) ~= '' then num_threads_found = vim.fn.line('$') - 1 end
-    print('Found ' .. num_threads_found .. ' threads')
+    if vim.fn.getline(2) ~= "" then num_threads_found = vim.fn.line("$") - 1 end
+    print("Found " .. num_threads_found .. " threads")
     vim.fn.search(jumptothreadid)
   end)
 
@@ -114,7 +122,7 @@ end
 -- nm.show_thread(vim.api.nvim_get_current_line())
 nm.show_thread = function(s)
   -- Fetch the threadid from the input `s` or from current line
-  local threadid = ''
+  local threadid = ""
   if s == nil then
     -- fetch from the current line since no input passed
     local line = v.nvim_get_current_line()
@@ -129,7 +137,7 @@ nm.show_thread = function(s)
   end
 
   -- Open buffer if already exists, otherwise create new `buf`
-  local bufno = vim.fn.bufnr('thread:' .. threadid)
+  local bufno = vim.fn.bufnr("thread:" .. threadid)
   if bufno ~= -1 then
     v.nvim_win_set_buf(0, bufno)
     return true
@@ -137,19 +145,20 @@ nm.show_thread = function(s)
   local buf = v.nvim_create_buf(true, true)
   v.nvim_buf_set_name(buf, "thread:" .. threadid)
   v.nvim_win_set_buf(0, buf)
-  v.nvim_command("silent 0read! notmuch show --exclude=false thread:" .. threadid .. " | col")
+  -- v.nvim_command("silent 0read! notmuch show --exclude=false thread:" .. threadid .. " | col")
+  local json = util.shell_sync({ "notmuch", "show", "--exclude=false", "--format=json", "thread:" .. threadid })
 
   -- Clean up the messages in the thread to display in UI friendly way
-  require('notmuch.util').process_msgs_in_thread(buf)
+  require("notmuch.util").process_msgs_in_thread(buf, json)
 
   -- Insert hint message at the top of the buffer
-  local hint_text = "Hints: <Enter>: Toggle fold message | <Tab>: Next message | <S-Tab>: Prev message | q: Close | a: See attachment parts"
-  v.nvim_buf_set_lines(buf, 0, 0, false, { hint_text , "" })
+  local hint_text =
+    "Hints: <Enter>: Toggle fold message | <Tab>: Next message | <S-Tab>: Prev message | q: Close | a: See attachment parts"
+  v.nvim_buf_set_lines(buf, 0, 0, false, { hint_text, "" })
 
   -- Place cursor at head of buffer and prepare display and disable modification
-  v.nvim_buf_set_lines(buf, -3, -1, true, {})
-  v.nvim_win_set_cursor(0, { 1, 0})
-  vim.bo.filetype="mail"
+  v.nvim_win_set_cursor(0, { 1, 0 })
+  vim.bo.filetype = "mail"
   vim.bo.modifiable = false
 end
 
@@ -164,7 +173,7 @@ end
 -- @usage
 -- lua require('notmuch').count('tag:inbox') -- > '999'
 nm.count = function(search)
-  local db = require'notmuch.cnotmuch'(config.options.notmuch_db_path, 0)
+  local db = require("notmuch.cnotmuch")(config.options.notmuch_db_path, 0)
   local q = db.create_query(search)
   local count_threads = q.count_threads()
   db.close()
@@ -181,7 +190,7 @@ end
 -- nm.show_all_tags() -- opens the `hello` page
 nm.show_all_tags = function()
   -- Fetch all tags available in the notmuch database
-  local db = require'notmuch.cnotmuch'(config.options.notmuch_db_path, 0)
+  local db = require("notmuch.cnotmuch")(config.options.notmuch_db_path, 0)
   local tags = db.get_all_tags()
   db.close()
 
@@ -193,15 +202,13 @@ nm.show_all_tags = function()
 
   -- Insert help hints at the top of the buffer
   local hint_text = "Hints: <Enter>: Show threads | q: Close | r: Refresh | %: Refresh maildir | c: Count messages"
-  v.nvim_buf_set_lines(buf, 0, 0, false, { hint_text , "" })
+  v.nvim_buf_set_lines(buf, 0, 0, false, { hint_text, "" })
 
   -- Clean up the buffer and set the cursor to the head
-  v.nvim_win_set_cursor(0, { 3, 0})
+  v.nvim_win_set_cursor(0, { 3, 0 })
   v.nvim_buf_set_lines(buf, -2, -1, true, {})
   vim.bo.filetype = "notmuch-hello"
   vim.bo.modifiable = false
 end
 
 return nm
-
--- vim: tabstop=2:shiftwidth=2:expandtab:foldmethod=indent

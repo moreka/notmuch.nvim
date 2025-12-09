@@ -1,8 +1,8 @@
 local s = {}
-local u = require('notmuch.util')
+local u = require("notmuch.util")
 local v = vim.api
 
-local config = require('notmuch.config')
+local config = require("notmuch.config")
 
 -- Prompt confirmation for sending an email
 --
@@ -18,10 +18,10 @@ local config = require('notmuch.config')
 --     confirm_sendmail(reply_filename)
 --   end, { buffer = true })
 local confirm_sendmail = function(filename)
-  local choice = v.nvim_call_function('confirm', {
-    'Send email?',
-    '&Yes\n&No',
-    2 -- Default to no
+  local choice = v.nvim_call_function("confirm", {
+    "Send email?",
+    "&Yes\n&No",
+    2, -- Default to no
   })
 
   if choice == 1 then
@@ -41,8 +41,8 @@ end
 -- @usage
 --   require('notmuch.send').sendmail('/tmp/my_new_email.eml')
 s.sendmail = function(filename)
-  os.execute('msmtp -t <' .. filename)
-  print('Successfully sent email: ' .. filename)
+  os.execute("msmtp -t <" .. filename)
+  print("Successfully sent email: " .. filename)
 end
 
 -- Reply to an email message
@@ -61,7 +61,7 @@ s.reply = function()
   if not id then return end
 
   -- Create new draft mail to hold reply
-  local reply_filename = '/tmp/reply-' .. id .. '.eml'
+  local reply_filename = "/tmp/reply-" .. id .. ".eml"
 
   -- Create and edit buffer containing reply file
   local buf = v.nvim_create_buf(true, false)
@@ -69,17 +69,18 @@ s.reply = function()
   vim.cmd.edit(reply_filename)
 
   -- If first time replying, generate draft. Otherwise, no need to duplicate
-  if not u.file_exists(reply_filename) then
-    vim.cmd('silent 0read! notmuch reply id:' .. id)
-  end
+  if not u.file_exists(reply_filename) then vim.cmd("silent 0read! notmuch reply id:" .. id) end
 
   vim.bo.bufhidden = "wipe" -- Automatically wipe buffer when closed
   v.nvim_win_set_cursor(0, { 1, 0 }) -- Return cursor to top of file
 
   -- Set keymap for sending
-  vim.keymap.set('n', config.options.keymaps.sendmail, function()
-    confirm_sendmail(reply_filename)
-  end, { buffer = true })
+  vim.keymap.set(
+    "n",
+    config.options.keymaps.sendmail,
+    function() confirm_sendmail(reply_filename) end,
+    { buffer = true }
+  )
 end
 
 -- Compose a new email
@@ -94,16 +95,16 @@ end
 --   -- Typically you can run this with `:ComposeMail` or pressing `C`
 --   require('notmuch.send').compose()
 s.compose = function(to)
-  to = to or ''
-  local compose_filename = '/tmp/compose.eml'
+  to = to or ""
+  local compose_filename = "/tmp/compose.eml"
 
   -- TODO: Add ability to modify default body message and signature
   local headers = {
-    'To: ' .. to,
-    'Cc: ',
-    'Subject: ',
-    '',
-    'Message body goes here',
+    "To: " .. to,
+    "Cc: ",
+    "Subject: ",
+    "",
+    "Message body goes here",
   }
 
   -- Create new buffer
@@ -115,9 +116,12 @@ s.compose = function(to)
   v.nvim_buf_set_lines(buf, 0, -1, false, headers)
 
   -- Keymap for sending the email
-  vim.keymap.set('n', config.options.keymaps.sendmail, function()
-    confirm_sendmail(compose_filename)
-  end, { buffer = true })
+  vim.keymap.set(
+    "n",
+    config.options.keymaps.sendmail,
+    function() confirm_sendmail(compose_filename) end,
+    { buffer = true }
+  )
 end
 
 return s

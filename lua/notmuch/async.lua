@@ -22,44 +22,52 @@ a.run_notmuch_search = function(search, buf, on_complete)
 
   -- Spawn subprocess using vim.loop (deprecated?)
   local handle
-  handle = vim.loop.spawn("notmuch", {
-    args = {"search", search},
-    stdio = {nil, stdout, stderr}
-  }, vim.schedule_wrap(function()
-    -- Close the pipes and handle
-    stdout:close()
-    stderr:close()
-    handle:close()
+  handle = vim.loop.spawn(
+    "notmuch",
+    {
+      args = { "search", search },
+      stdio = { nil, stdout, stderr },
+    },
+    vim.schedule_wrap(function()
+      -- Close the pipes and handle
+      stdout:close()
+      stderr:close()
+      handle:close()
 
-    -- Call the completion callback
-    on_complete()
-  end))
+      -- Call the completion callback
+      on_complete()
+    end)
+  )
 
   -- Helper variable for maintaining incomplete lines between reads
   local partial_data = ""
 
   -- Read data from stdout and write it to the buffer
-  vim.loop.read_start(stdout, vim.schedule_wrap(function(_, data)
-    if data then
-      -- Combine earlier incomplete chunk with newest read
-      partial_data = partial_data .. data
-      local lines = vim.split(partial_data, '\n')
-      -- collect incomplete line at the tail of lines
-      partial_data = table.remove(lines)
+  vim.loop.read_start(
+    stdout,
+    vim.schedule_wrap(function(_, data)
+      if data then
+        -- Combine earlier incomplete chunk with newest read
+        partial_data = partial_data .. data
+        local lines = vim.split(partial_data, "\n")
+        -- collect incomplete line at the tail of lines
+        partial_data = table.remove(lines)
 
-      -- Paste lines into the tail of `buf`
-      vim.bo[buf].modifiable = true
-      vim.api.nvim_buf_set_lines(buf, -1, -1, false, lines)
-      vim.bo[buf].modifiable = false
-    end
-  end))
+        -- Paste lines into the tail of `buf`
+        vim.bo[buf].modifiable = true
+        vim.api.nvim_buf_set_lines(buf, -1, -1, false, lines)
+        vim.bo[buf].modifiable = false
+      end
+    end)
+  )
 
   -- Log errors from stderr
-  vim.loop.read_start(stderr, vim.schedule_wrap(function(err, _)
-    if err then
-      vim.notify("ERROR: " .. err)
-    end
-  end))
+  vim.loop.read_start(
+    stderr,
+    vim.schedule_wrap(function(err, _)
+      if err then vim.notify("ERROR: " .. err) end
+    end)
+  )
 end
 
 return a

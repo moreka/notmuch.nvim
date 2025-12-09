@@ -22,7 +22,7 @@ local c = {}
 local ffi = require("ffi")
 local nm = ffi.load("notmuch")
 
-ffi.cdef[[
+ffi.cdef([[
   typedef struct _notmuch_database notmuch_database_t;
   typedef struct {} notmuch_query_t;
   typedef struct {} notmuch_messages_t;
@@ -146,22 +146,22 @@ ffi.cdef[[
 
   notmuch_status_t
   notmuch_message_tags_to_maildir_flags (notmuch_message_t *message);
-]]
+]])
 
 -- Opens a Notmuch database. Entry point into the api.
 --
 -- @path: Directory where the Notmuch database is stored.
 -- @mode: Read/write mode. Either 0 for read or 1 for read/write.
 local function open_database(path, mode)
-  local db = ffi.new('notmuch_database_t*[1]')
+  local db = ffi.new("notmuch_database_t*[1]")
   local res = nm.notmuch_database_open(path, mode, db)
-  assert(res == 0, 'Error opening database with err=' .. res)
+  assert(res == 0, "Error opening database with err=" .. res)
   return {
     _db = db[0],
     create_query = function(query) return create_query(query, db[0]) end,
     get_all_tags = function() return get_all_tags(db[0]) end,
     get_message = function(id) return get_message(id, db[0]) end,
-    close = function() nm.notmuch_database_close(db[0]) end
+    close = function() nm.notmuch_database_close(db[0]) end,
   }
 end
 
@@ -196,9 +196,7 @@ end
 local thread_obj = {}
 
 -- Returns subject line string of a thread.
-function thread_obj:get_subject()
-  return ffi.string(nm.notmuch_thread_get_subject(self._thread))
-end
+function thread_obj:get_subject() return ffi.string(nm.notmuch_thread_get_subject(self._thread)) end
 
 -- Returns a table of tags attached to a thread.
 function thread_obj:get_tags()
@@ -214,11 +212,11 @@ end
 -- Adds tag to all messages inside a thread.
 function thread_obj:add_tag(tag)
   local messages = nm.notmuch_thread_get_messages(self._thread)
-  local message = ffi.new('notmuch_message_t[1]')
+  local message = ffi.new("notmuch_message_t[1]")
   while nm.notmuch_messages_valid(messages) == 1 do
     message = nm.notmuch_messages_get(messages)
     local res = nm.notmuch_message_add_tag(message, tag)
-    assert(res == 0, 'Error adding tag:' .. tag .. '. err=' .. res)
+    assert(res == 0, "Error adding tag:" .. tag .. ". err=" .. res)
     nm.notmuch_message_tags_to_maildir_flags(message)
     nm.notmuch_messages_move_to_next(messages)
   end
@@ -227,11 +225,11 @@ end
 -- Removes tag to all messages inside a thread.
 function thread_obj:rm_tag(tag)
   local messages = nm.notmuch_thread_get_messages(self._thread)
-  local message = ffi.new('notmuch_message_t[1]')
+  local message = ffi.new("notmuch_message_t[1]")
   while nm.notmuch_messages_valid(messages) == 1 do
     message = nm.notmuch_messages_get(messages)
     local res = nm.notmuch_message_remove_tag(message, tag)
-    assert(res == 0, 'Error removing tag:' .. tag .. '. err=' .. res)
+    assert(res == 0, "Error removing tag:" .. tag .. ". err=" .. res)
     nm.notmuch_message_tags_to_maildir_flags(message)
     nm.notmuch_messages_move_to_next(messages)
   end
@@ -242,18 +240,16 @@ end
 -- @query: Query object to get threads from
 function get_threads(query)
   local out = {}
-  local threads = ffi.new('notmuch_threads_t*[1]')
+  local threads = ffi.new("notmuch_threads_t*[1]")
   local res = nm.notmuch_query_search_threads(query, threads)
-  assert(res == 0, 'Error retrieving threads, err=' .. res)
+  assert(res == 0, "Error retrieving threads, err=" .. res)
   while nm.notmuch_threads_valid(threads[0]) == 1 do
     local thread = setmetatable({
       _thread = nm.notmuch_threads_get(threads[0]),
     }, {
       __index = function(self, key)
-        if thread_obj[key] then
-          return thread_obj[key]
-        end
-      end
+        if thread_obj[key] then return thread_obj[key] end
+      end,
     })
     table.insert(out, thread)
     nm.notmuch_threads_move_to_next(threads[0])
@@ -278,29 +274,27 @@ end
 function message_obj:add_tag(tag)
   local res = nm.notmuch_message_add_tag(self._msg, tag)
   nm.notmuch_message_tags_to_maildir_flags(self._msg)
-  assert(res == 0, 'Error adding tag:' .. tag .. '. err=' .. res)
+  assert(res == 0, "Error adding tag:" .. tag .. ". err=" .. res)
 end
 
 -- Remove a tag to a message.
 function message_obj:rm_tag(tag)
   local res = nm.notmuch_message_remove_tag(self._msg, tag)
   nm.notmuch_message_tags_to_maildir_flags(self._msg)
-  assert(res == 0, 'Error removing tag:' .. tag .. '. err=' .. res)
+  assert(res == 0, "Error removing tag:" .. tag .. ". err=" .. res)
 end
 
 -- Get a message object from an id: straight from the database.
 function get_message(id, db)
-  local msg = ffi.new('notmuch_message_t*[1]')
+  local msg = ffi.new("notmuch_message_t*[1]")
   local res = nm.notmuch_database_find_message(db, id, msg)
-  assert(res == 0, 'Error finding message from id. err=' .. res)
+  assert(res == 0, "Error finding message from id. err=" .. res)
   local message = setmetatable({
     _msg = msg[0],
   }, {
     __index = function(self, key)
-      if message_obj[key] then
-        return message_obj[key]
-      end
-    end
+      if message_obj[key] then return message_obj[key] end
+    end,
   })
   return message
 end
@@ -308,9 +302,9 @@ end
 -- Get a list of message objects from a given query.
 function get_messages(query)
   local out = {}
-  local messages = ffi.new('notmuch_messages_t*[1]')
+  local messages = ffi.new("notmuch_messages_t*[1]")
   local res = nm.notmuch_query_search_messages(query, threads)
-  assert(res == 0, 'Error retrieving threads, err=' .. res)
+  assert(res == 0, "Error retrieving threads, err=" .. res)
 end
 
 -- Counts the number of unique threads that matched a given query.
@@ -319,17 +313,15 @@ end
 function count_threads(query)
   local count = ffi.new("unsigned int[1]")
   local res = nm.notmuch_query_count_threads(query, count)
-  assert(res == 0, 'Error counting threads. err=' .. res)
+  assert(res == 0, "Error counting threads. err=" .. res)
   return count[0]
 end
 
 function count_messages(query)
   local count = ffi.new("unsigned int[1]")
   local res = nm.notmuch_query_count_messages(query, count)
-  assert(res == 0, 'Error counting messages. err=' .. res)
+  assert(res == 0, "Error counting messages. err=" .. res)
   return count[0]
 end
 
 return open_database
-
--- vim: tabstop=2:shiftwidth=2:expandtab:foldmethod=indent

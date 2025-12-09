@@ -1,84 +1,74 @@
 local C = {}
+local util = require("notmuch.util")
 
--- Define default configuration of `notmuch.nvim`
---
--- This function defines the default configuration options of the plugin
--- including keymaps. The defaults can be overridden with options `opts` passed
--- by the user in the `setup()` function.
-C.defaults = function()
-  -- Helper to safely get notmuch config variables
-  local function get_notmuch_config(key, fallback)
-    local result = vim.fn.system('notmuch config get ' .. key):gsub('\n', '')
-    if vim.v.shell_error ~= 0 or result == '' or result:match('^%s*$') or result:match('notmuch setup') then
-      if result:match('command not found') or result:match('not found') then
-	vim.notify('notmuch command not found. Please install notmuch.', vim.log.levels.ERROR)
-      end
-      return fallback
-    end
-    return result
+---Loads default notmuch config via cli
+---
+---@return { database_path: string, user_name: string, user_primary_email: string, exclude_tags: string[] }?
+local load_config_from_notmuch = function()
+  local cfg = util.shell_sync({ "notmuch", "config", "list" })
+  if cfg == nil then
+    util.error("cannot read config from notmuch")
+    return nil
   end
+  --HACK: make the output of notmuch config into a lua table
+  cfg = cfg:gsub("=", '"]="')
+  cfg = cfg:gsub("\n", '",\n["')
+  cfg = cfg:sub(0, -3)
+  cfg = '{\n["' .. cfg .. "}"
+  local config = vim.fn.luaeval(cfg)
 
-  local name = get_notmuch_config('user.name', nil)
-  local email = get_notmuch_config('user.primary_email', nil)
-  local db_path = get_notmuch_config('database.path', nil)
+  return {
+    database_path = config["database.path"],
+    user_name = config["user.name"],
+    user_primary_email = config["user.primary_email"],
+    exclude_tags = vim.split(config["search.exclude_tags"], ";"),
+  }
+end
 
-  -- Validate required configuration form notmuch and fail-fast
+---@class NotmuchKeymap
+---@field sendmail string
+
+---@class NotmuchConfig
+---@field notmuch_db_path string?
+---@field from string?
+---@field exclude_tags string[]?
+---@field maildir_sync_cmd string?
+---@field open_cmd string?
+---@field keymaps NotmuchKeymap[]?
+
+---Define default configuration of `notmuch.nvim`
+---
+---This function defines the default configuration options of the plugin
+---including keymaps. The defaults can be overridden with options `opts` passed
+---by the user in the `setup()` function.
+---@return NotmuchConfig?
+C.defaults = function()
+  local nm_config = load_config_from_notmuch()
+  local name = nm_config and nm_config.user_name or nil
+  local email = nm_config and nm_config.user_primary_email or nil
+  local db_path = nm_config and nm_config.database_path or nil
+  local excluded_tags = nm_config and nm_config.exclude_tags or {}
+
   if not db_path then
-    vim.notify(
-      'notmuch.nvim: database.path not configured.\n' ..
-      'Please run: notmuch setup',
-      vim.log.levels.ERROR
-    )
+    util.error("notmuch.nvim: database.path not configured.\n" .. "Please run: notmuch setup")
     return nil
   end
 
-  -- Validate user name and email from notmuch config
   if not name or not email then
-    vim.notify(
-      'notmuch.nvim: user.name or user.primary_email not configured.\n' ..
-      'Please run: notmuch setup',
-      vim.log.levels.WARN
-    )
-    name = name or 'User'
-    email = email or 'user@localhost'
+    util.error("notmuch.nvim: user.name or user.primary_email not configured.\n" .. "Please run: notmuch setup")
+    return nil
   end
 
-  local defaults = {
+  return {
     notmuch_db_path = db_path,
-    from = name .. ' <' .. email .. '>',
-    maildir_sync_cmd = 'mbsync -a',
-    open_cmd = 'xdg-open',
+    from = name .. " <" .. email .. ">",
+    exclude_tags = excluded_tags,
+    maildir_sync_cmd = "mbsync -a",
+    open_cmd = "xdg-open",
     keymaps = { -- This should capture all notmuch.nvim related keymappings
-      sendmail = '<C-g><C-g>',
+      sendmail = "<C-c><C-c>",
     },
   }
-  return defaults
-end
-
--- Setup config for `notmuch.nvim`
---
--- This function sets up the configuration options which control the behavior of
--- the plugin. These options are mainly controlled by `defaults()` but can be
--- overridden by the user with the `opts` table passed via their package manager
--- which will pass it through the `init.setup()` function on startup.
---
----@param opts table: contains user override configuration options
---
----@usage: see `init.lua`'s `setup()` function for invocation
-C.setup = function(opts)
-  local options = opts or {}
-  local defaults = C.defaults()
-
-  if not defaults then
-    vim.notify(
-      'notmuch.nvim: Failed to load. Please configure notmuch first.',
-      vim.log.levels.ERROR
-    )
-    return false
-  end
-
-  C.options = vim.tbl_deep_extend('force', defaults, options)
-  return true
 end
 
 return C
