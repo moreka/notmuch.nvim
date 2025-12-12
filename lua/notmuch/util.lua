@@ -20,7 +20,7 @@ local function html_to_text(html_content)
   f:write(html_content)
   f:close()
 
-  local output = u.shell_sync({ "w3m", "-dump", "-T", "text/html", tmpfile })
+  local output = u.shell_sync({ "w3m", "-dump", "-T", "text/html", "-cols", "10000", tmpfile })
   os.remove(tmpfile)
   return output
 end
